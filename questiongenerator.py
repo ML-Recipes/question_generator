@@ -14,6 +14,7 @@ from transformers import (
     AutoModelForSequenceClassification,
 )
 
+import torch.nn.functional as F
 
 class QuestionGenerator:
     def __init__(self, model_dir=None):
@@ -53,6 +54,7 @@ class QuestionGenerator:
                 generated_questions, qg_answers
             )
             scores = self.qa_evaluator.get_scores(encoded_qa_pairs)
+        
             if num_questions:
                 qa_list = self._get_ranked_qa_pairs(
                     generated_questions, qg_answers, scores, num_questions
@@ -241,12 +243,13 @@ class QuestionGenerator:
             )
 
         qa_list = []
+        
         for i in range(num_questions):
-            index = scores[i]
             qa = self._make_dict(
-                generated_questions[index].split("?")[0] + "?", qg_answers[index]
+                generated_questions[i].split("?")[0] + "?", qg_answers[i], scores[i][1]
             )
             qa_list.append(qa)
+        
         return qa_list
 
     def _get_all_qa_pairs(self, generated_questions, qg_answers):
@@ -258,10 +261,11 @@ class QuestionGenerator:
             qa_list.append(qa)
         return qa_list
 
-    def _make_dict(self, question, answer):
+    def _make_dict(self, question, answer, score):
         qa = {}
         qa["question"] = question
         qa["answer"] = answer
+        qa['confidence'] = float("{0:.4f}".format(score))
         return qa
 
 
@@ -291,10 +295,15 @@ class QAEvaluator:
         self.qae_model.eval()
         with torch.no_grad():
             for i in range(len(encoded_qa_pairs)):
-                scores[i] = self._evaluate_qa(encoded_qa_pairs[i])
-
+                scores[i] = float(self._evaluate_qa(encoded_qa_pairs[i]))
+  
+        '''
         return [
             k for k, v in sorted(scores.items(), key=lambda item: item[1], reverse=True)
+        ]
+        '''
+        return [
+            (k, v) for k, v in sorted(scores.items(), key=lambda item: item[1], reverse=True)
         ]
 
     def _encode_qa(self, question, answer):
@@ -315,7 +324,9 @@ class QAEvaluator:
 
     def _evaluate_qa(self, encoded_qa_pair):
         output = self.qae_model(**encoded_qa_pair)
-        return output[0][0][1]
+        question_answer = output[0][0]
+        probs = F.softmax(question_answer, dim=0)
+        return probs[1]
 
 
 def print_qa(qa_list, show_answers=True):
